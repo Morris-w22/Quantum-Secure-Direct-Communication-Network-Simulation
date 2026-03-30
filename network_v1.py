@@ -3,7 +3,6 @@ import heapq
 
 # network parameters
 MTU = 1500
-MAX_QM_CAPACITY = 100000
 PROCESS_PER_STEP = 100 # 处理qubit速率
 max_IP_datagram = 65536
 timestep = 1 # us
@@ -97,7 +96,7 @@ class Packet:
         
 
 class Node:
-    def __init__(self, node_id: int, max_node_buffer):
+    def __init__(self, node_id: int, max_qm_capacity: int, max_node_buffer: int):
         self.id = node_id
         self.max_node_buffer = max_node_buffer
         self.remain_queue = max_node_buffer
@@ -106,7 +105,7 @@ class Node:
 
         self.queue_dict = {} # 缓冲区(qubit, packet)队列(按会话做区分)
         
-        self.qm_capacity = MAX_QM_CAPACITY # 量子存储容量
+        self.qm_capacity = max_qm_capacity # 量子存储容量
         self.start_node = [] # 当前节点作为起始节点参与的所有会话
     
     def snd_packets(self, session_id, guard, src_node, dst_node):
@@ -205,7 +204,7 @@ class Link:
         self.snd_rate_per_session = 0
 
 class Network:
-    def __init__(self, link_capacity_matrix: np.ndarray, hop_distance_matrix: np.ndarray, max_node_buffer: np.ndarray):
+    def __init__(self, link_capacity_matrix: np.ndarray, hop_distance_matrix: np.ndarray, max_qm_capacity: np.ndarray, max_node_buffer: np.ndarray):
         self.hop_distances = hop_distance_matrix
         self.capacities = link_capacity_matrix*timestep # 每个时间步链路的最大传输比特量
         self.nodes_num = self.capacities.shape[0]
@@ -215,7 +214,7 @@ class Network:
         self.links = []
         # 创建节点类的集合
         for i in range(self.nodes_num):
-            self.nodes.append(Node(i, max_node_buffer[i]))
+            self.nodes.append(Node(i, max_qm_capacity[i], max_node_buffer[i]))
         # 创建链路类
         for i in range(self.nodes_num):
             for j in range(self.nodes_num):
@@ -229,8 +228,9 @@ class Network:
         # 统计结果参数
         self.active_qubits = 0
         self.success_qubits = 0
-        self.etg_fail_qubits = 0
-        self.throw_fail_qubits = 0
+        self.etg_fail_qubits = 0 # 由于ETG超时丢弃的qubit数量
+        self.queue_fail_qubits = 0 # 由于缓冲区已满丢弃的qubit数量
+        self.qm_fail_qubits = 0 # 由于量子存储已满丢弃的qubit数量
 
     def make_sessions(self, info: np.ndarray, qubits_total_len: np.ndarray):
         # 创建会话类
@@ -279,7 +279,7 @@ class Network:
                         remove += 1
                         if packet.type == "MS":
                             self.nodes[packet.dst].qm_capacity += packet.save_qm_qubits
-                        self.throw_fail_qubits += packet.qubits_len
+                        self.queue_fail_qubits += packet.qubits_len
             
         new_active_sessions = []
         for session in self.active_sessions:

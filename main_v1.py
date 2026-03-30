@@ -31,21 +31,18 @@ hop_distance_matrix = np.array([
     [0, 0, 0, 10, 0, 0, 10, 0, 0, 0]
 ])
 
-T_STEPS = 12000
-SESSIONS_NUM = 10
+T_STEPS = 15000
+SESSIONS_NUM = 20
 LINK_VELOCITY = 0.3 #km/us
 AVG_SESSION_INTERVAL = 10 #us
 INCUM = 192 # 扩频比
+max_qm_capacity = np.ones((link_capacity_matrix.shape[0])) * 100000 # 每个节点的量子存储容量
 max_node_buffer = np.ones((link_capacity_matrix.shape[0])) * 2000 # 每个节点的最大缓冲区大小
 dataflow = np.ones((SESSIONS_NUM)) * 100 # 每个会话需要传输的量子比特数
 
-def sessions_start_time(nodes_num: int, sessions_num: int, average_session_interval: float):
-    # 泊松随机过程生成会话时间
+def sessions_start_time(nodes_num: int, sessions_num: int):
     rng = np.random.default_rng() # 固定的随机数生成器
-    # 生成指数分布的到达间隔
-    inter_arrival_times = rng.exponential(scale=average_session_interval, size=sessions_num)
-    # 累加得到会话起始时间
-    start_time_list = np.cumsum(inter_arrival_times).astype(int)
+    start_time_list = np.zeros(sessions_num, dtype=int) # 同时到达
     src_list = np.zeros(sessions_num, dtype=int)
     dst_list = np.zeros_like(src_list)
     for i in range(sessions_num):
@@ -56,11 +53,11 @@ def sessions_start_time(nodes_num: int, sessions_num: int, average_session_inter
 if __name__ == "__main__":
     # preparation
     print("Constructing network...")
-    simulator = nt.Network(link_capacity_matrix, hop_distance_matrix, max_node_buffer)
+    simulator = nt.Network(link_capacity_matrix, hop_distance_matrix, max_qm_capacity, max_node_buffer)
     # 0. 计算会话的启动时间和信息量
-    #sessions_info = sessions_start_time(simulator.nodes_num, sessions_num=SESSIONS_NUM, average_session_interval=AVG_SESSION_INTERVAL)
-    #simulator.make_sessions(sessions_info)
-    simulator.make_sessions(np.array([[9, 1, 0], [3, 7, 0], [6, 8, 0], [1, 8, 0], [2, 3, 0], [3, 8, 0], [8, 0, 0], [5, 0, 0], [4, 3, 0], [4, 7, 0]]), dataflow*INCUM)
+    sessions_info = sessions_start_time(simulator.nodes_num, sessions_num=SESSIONS_NUM)
+    simulator.make_sessions(sessions_info, dataflow*INCUM)
+    #simulator.make_sessions(np.array([[9, 1, 0], [3, 7, 0], [6, 8, 0], [1, 8, 0], [2, 3, 0], [3, 8, 0], [8, 0, 0], [5, 0, 0], [4, 3, 0], [4, 7, 0]]), dataflow*INCUM)
     
     # iteration
     print("Simulation started.")
@@ -68,6 +65,7 @@ if __name__ == "__main__":
     end_time = T_STEPS
     _active_qubits = np.zeros((T_STEPS+1))
     _success_session_qubits = np.zeros((SESSIONS_NUM, T_STEPS+1))
+
     while time <= T_STEPS:
         # 1. 激活到达的会话，计算会话路径
         simulator.activate_sessions(time)
@@ -148,7 +146,7 @@ if __name__ == "__main__":
                         session_id = packet.belong
                         if session_id not in node.queue_dict:
                             node.queue_dict[session_id] = []
-                        simulator.throw_fail_qubits += packet.qubits_len - node.remain_queue
+                        simulator.queue_fail_qubits += packet.qubits_len - node.remain_queue
                         packet.qubits_len = node.remain_queue
                         node.queue_dict[session_id].append([int(packet.qubits_len), packet])
                         node.update_remain_queue()
@@ -156,7 +154,7 @@ if __name__ == "__main__":
                     else:
                         # 队列已满，丢弃
                         packet.fail = True
-                        simulator.throw_fail_qubits += packet.qubits_len
+                        simulator.queue_fail_qubits += packet.qubits_len
                         continue
                 else:
                     raise Exception("packet.trans_delay error")
@@ -176,14 +174,15 @@ if __name__ == "__main__":
                                 simulator.pause_packets.append(packet)
                             elif node.qm_capacity > 0:
                                 # 丢弃部分
-                                simulator.throw_fail_qubits += packet.qubits_len - node.qm_capacity
+                                simulator.qm_fail_qubits += packet.qubits_len - node.qm_capacity
                                 packet.qubits_len = node.qm_capacity
                                 node.qm_capacity = 0
                                 simulator.pause_packets.append(packet)
                             elif node.qm_capacity == 0:
                                 # 存储已满，丢弃
                                 packet.fail = True
-                                simulator.throw_fail_qubits += packet.qubits_len
+                                simulator.qm_fail_qubits += packet.qubits_len
+                                print(f"[警告] 时间{time}：节点{node.id}量子存储已满，丢弃packet")
                                 continue
                             else:
                                 raise Exception("node.qm_capacity error")
@@ -238,6 +237,8 @@ if __name__ == "__main__":
             
         # 7. 清理完成的会话
         simulator.cleanup()
+
+        # 8. 统计
         simulator.active_qubits = sum(packet.qubits_len for packet in simulator.active_packets)
         _active_qubits[time] = simulator.active_qubits
         for i, session in enumerate(simulator.sessions):
@@ -248,13 +249,14 @@ if __name__ == "__main__":
             print(f"Time: {time}")
             print(f"Active Sessions: {len(simulator.active_sessions)}")
             for session in simulator.active_sessions:
-                print(f"Session {session.id} progress: {session.src}:{session.dst}:{session.remain_bit}:{session.path}")
+                print(f"Session {session.id} progress: {session.src}:{session.dst}, remain bit: {session.remain_bit}, path: {session.path}")
             for node in simulator.nodes:
                 print(f"Node {node.id} queue: {sum(item[0] for lst in node.queue_dict.values() for item in lst)}")
             print(f"Active Qubits Number: {int(simulator.active_qubits)}")
             print(f"Success Qubits Number: {int(simulator.success_qubits)}")
             print(f"ETG Fail Qubits Number: {int(simulator.etg_fail_qubits)}")
-            print(f"Throw Fail Qubits Number: {int(simulator.throw_fail_qubits)}")
+            print(f"Queue Fail Qubits Number: {int(simulator.queue_fail_qubits)}")
+            print(f"QM Fail Qubits Number: {int(simulator.qm_fail_qubits)}")
         
         time += 1
         if not simulator.active_sessions and not simulator.active_packets and not simulator.pause_packets:
@@ -278,4 +280,5 @@ if __name__ == "__main__":
     print(f"Total Success Qubits: {int(simulator.success_qubits)}")
     print(f"Total Message Bits: {int(simulator.success_qubits*2/INCUM)}")
     print(f"Total ETG Fail Qubits: {int(simulator.etg_fail_qubits)}")
-    print(f"Total Throw Fail Qubits: {int(simulator.throw_fail_qubits)}")
+    print(f"Total Queue Fail Qubits: {int(simulator.queue_fail_qubits)}")
+    print(f"Total QM Fail Qubits: {int(simulator.qm_fail_qubits)}")
