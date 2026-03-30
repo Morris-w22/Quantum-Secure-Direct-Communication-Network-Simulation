@@ -5,14 +5,12 @@ import heapq
 MTU = 1500
 MAX_QM_CAPACITY = 100000
 PROCESS_PER_STEP = 100 # 处理qubit速率
-INCUM = 192 # 扩频比例
 max_IP_datagram = 65536
 timestep = 1 # us
 protect_time = 10 # us
 qubit_read_time = 0.5 # us
 cbyte_read_time = 0.08 # us
 alpha = 0.2
-dataflow = 100
 
 def split_integer(n, chunk_size):
     # 计算划分后的数量
@@ -194,8 +192,8 @@ class Session:
         self.src = src
         self.dst = dst
         self.start_time = start_time
-        self.dataflow = data_len*INCUM # 数据流总长
-        self.remain_bit = data_len*INCUM # 还需传输的bit
+        self.dataflow = data_len # 数据流总长
+        self.remain_bit = data_len # 还需传输的bit
         self.active = False
 
 class Link:
@@ -234,11 +232,11 @@ class Network:
         self.etg_fail_qubits = 0
         self.throw_fail_qubits = 0
 
-    def make_sessions(self, info: np.ndarray):
+    def make_sessions(self, info: np.ndarray, qubits_total_len: np.ndarray):
         # 创建会话类
         for i in range(info.shape[0]):
-            self.sessions.append(Session(int(info[i][0]), int(info[i][1]), info[i][2], i, dataflow))
-   
+            self.sessions.append(Session(int(info[i][0]), int(info[i][1]), info[i][2], i, qubits_total_len[i]))
+
     def activate_sessions(self, time):
         for session in self.sessions:
             if (not session.active) and (time >= session.start_time):

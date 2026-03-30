@@ -31,12 +31,13 @@ hop_distance_matrix = np.array([
     [0, 0, 0, 10, 0, 0, 10, 0, 0, 0]
 ])
 
-max_node_buffer = np.ones((link_capacity_matrix.shape[0])) * 2000
-
 T_STEPS = 12000
 SESSIONS_NUM = 10
 LINK_VELOCITY = 0.3 #km/us
 AVG_SESSION_INTERVAL = 10 #us
+INCUM = 192 # 扩频比
+max_node_buffer = np.ones((link_capacity_matrix.shape[0])) * 2000 # 每个节点的最大缓冲区大小
+dataflow = np.ones((SESSIONS_NUM)) * 100 # 每个会话需要传输的量子比特数
 
 def sessions_start_time(nodes_num: int, sessions_num: int, average_session_interval: float):
     # 泊松随机过程生成会话时间
@@ -59,12 +60,12 @@ if __name__ == "__main__":
     # 0. 计算会话的启动时间和信息量
     #sessions_info = sessions_start_time(simulator.nodes_num, sessions_num=SESSIONS_NUM, average_session_interval=AVG_SESSION_INTERVAL)
     #simulator.make_sessions(sessions_info)
-    simulator.make_sessions(np.array([[9, 1, 0], [3, 7, 0], [6, 8, 0], [1, 8, 0], [2, 3, 0], [3, 8, 0], [8, 0, 0], [5, 0, 0], [4, 3, 0], [4, 7, 0]]))
+    simulator.make_sessions(np.array([[9, 1, 0], [3, 7, 0], [6, 8, 0], [1, 8, 0], [2, 3, 0], [3, 8, 0], [8, 0, 0], [5, 0, 0], [4, 3, 0], [4, 7, 0]]), dataflow*INCUM)
     
     # iteration
     print("Simulation started.")
     time = 0
-    end_time = -1
+    end_time = T_STEPS
     _active_qubits = np.zeros((T_STEPS+1))
     _success_session_qubits = np.zeros((SESSIONS_NUM, T_STEPS+1))
     while time <= T_STEPS:
@@ -262,18 +263,19 @@ if __name__ == "__main__":
     
     # plot
     plt.figure(figsize=(12, 6))
-    plt.plot(_active_qubits, 'r--', linewidth=2, label='Active Qubits')
+    plt.plot(_active_qubits[:end_time], 'r--', linewidth=2, label='Active Qubits')
     for i in range(len(simulator.sessions)):
-        plt.plot(_success_session_qubits[i, :], linewidth=2, label=f'Success Session Qubits {i}')
+        plt.plot(_success_session_qubits[i, :end_time], linewidth=2, label=f'Success Session Qubits {i}')
     plt.xlabel("Time (us)")
     plt.ylabel("Qubits Number")
     plt.legend()
     plt.show()
     
-    print("\n=== 最终统计 ===")
+    print("\n=== 电路交换策略最终统计 ===")
     print(f"Total Time: {end_time}")
     for session in simulator.sessions:
-        print(f"Session {session.id} progress: {session.src}:{session.dst}:{session.remain_bit}:{session.path}")
+        print(f"Session {session.id}: {session.src}->{session.dst}; Success Qubits: {int(_success_session_qubits[session.id, end_time-1])}")
     print(f"Total Success Qubits: {int(simulator.success_qubits)}")
+    print(f"Total Message Bits: {int(simulator.success_qubits*2/INCUM)}")
     print(f"Total ETG Fail Qubits: {int(simulator.etg_fail_qubits)}")
     print(f"Total Throw Fail Qubits: {int(simulator.throw_fail_qubits)}")

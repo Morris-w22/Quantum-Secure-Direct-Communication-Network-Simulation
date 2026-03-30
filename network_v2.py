@@ -5,14 +5,12 @@ import heapq
 MTU = 1500
 MAX_QM_CAPACITY = 100000
 PROCESS_PER_STEP = 100 # 处理qubit速率
-INCUM = 192 # 扩频比例
 max_IP_datagram = 65536
 timestep = 1 # us
 protect_time = 10 # us
 qubit_read_time = 0.5 # us
 cbyte_read_time = 0.08 # us
 alpha = 0.2
-dataflow = 100
 
 def split_integer(n, chunk_size):
     num_chunks = (n + chunk_size - 1) // chunk_size    
@@ -249,8 +247,8 @@ class Session:
         self.src = src
         self.dst = dst
         self.start_time = start_time
-        self.dataflow = data_len*INCUM
-        self.remain_bit = data_len*INCUM
+        self.dataflow = data_len
+        self.remain_bit = data_len
         self.active = False
 
 class Link:
@@ -299,12 +297,11 @@ class Network:
         self.success_qubits = 0
         self.etg_fail_qubits = 0
         self.throw_fail_qubits = 0
-        self.route_switches = 0
 
-    def make_sessions(self, info: np.ndarray):
+    def make_sessions(self, info: np.ndarray, qubits_total_len: np.ndarray):
         for i in range(info.shape[0]):
-            self.sessions.append(Session(int(info[i][0]), int(info[i][1]), info[i][2], i, dataflow))
-   
+            self.sessions.append(Session(int(info[i][0]), int(info[i][1]), info[i][2], i, qubits_total_len[i]))
+
     def activate_sessions(self, time):
         """激活会话，并注册源节点"""
         for session in self.sessions:
